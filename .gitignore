@@ -72,3 +72,7 @@ cmake-build-*/
 
 ### Visual Studio
 .vs
+
+### Zig build
+zig-cache
+zig-out
