@@ -16,6 +16,9 @@
 #ifndef UV_MBED_COMPRESSION_H
 #define UV_MBED_COMPRESSION_H
 
+#include <stdint.h>
+#include <stdlib.h>
+
 #if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
 typedef intptr_t ssize_t;
 #ifndef SSIZE_MAX
