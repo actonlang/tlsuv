@@ -23,17 +23,17 @@ pub fn build(b: *std.build.Builder) void {
     lib.addCSourceFiles(&.{
         "src/tlsuv.c",
         "src/bio.c",
-        "src/http.c",
+//        "src/http.c",
         "src/tcp_src.c",
         "src/um_debug.c",
         "src/um_debug.h",
-        "src/websocket.c",
-        "src/http_req.c",
+//        "src/websocket.c",
+//        "src/http_req.c",
         "src/tls_link.c",
         "src/base64.c",
         "src/tls_engine.c",
-        "src/compression.c",
-        "src/compression.h",
+//        "src/compression.c",
+//        "src/compression.h",
         "src/p11.c",
         "src/p11.h"
         }, flags.items);
