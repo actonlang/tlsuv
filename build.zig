@@ -64,6 +64,7 @@ pub fn build(b: *std.build.Builder) void {
     lib.addIncludePath(.{ .path = "deps/uv_link_t" });
     lib.addIncludePath(.{ .path = "src" });
     lib.addIncludePath(.{ .path = "include" });
+    lib.addIncludePath(.{ .path = "../../depsout/include" });
     lib.installHeader("deps/uv_link_t/include/uv_link_t.h", "uv_link_t.h");
 //    lib.installHeadersDirectory("include", "include");
     lib.linkLibC();
