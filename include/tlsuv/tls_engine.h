@@ -74,6 +74,12 @@ struct tlsuv_engine_s {
      */
     void (*set_io_fd)(tlsuv_engine_t self, uv_os_fd_t fd);
 
+
+    /**
+     * set TLS engine authmode
+     */
+    void (*set_authmode)(tlsuv_engine_t self, int authmode);
+
     /**
      * set requested ALPN protocols
      * @param self

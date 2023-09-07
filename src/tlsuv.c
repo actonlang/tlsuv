@@ -40,6 +40,16 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#ifdef USE_MBEDTLS
+#define TLSUV_VERIFY_NONE                 0 // MBEDTLS_SSL_VERIFY_NONE
+#define TLSUV_VERIFY_REQUIRED             2 // MBEDTLS_SSL_VERIFY_REQUIRED
+#elif USE_OPENSSL
+#define TLSUV_VERIFY_NONE              0x00 // SSL_VERIFY_NONE
+#define TLSUV_VERIFY_REQUIRED          0x01 // SSL_VERIFY_PEER
+#else
+#error "No TLS engine defined, set USE_MBEDTLS or USE_OPENSSL"
+#endif
+
 static uv_os_sock_t new_socket(const struct addrinfo *addr);
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
@@ -81,6 +91,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     clt->read_cb = NULL;
     clt->alloc_cb = NULL;
     clt->queue_len = 0;
+    clt->authmode = TLSUV_VERIFY_REQUIRED;
     TAILQ_INIT(&clt->queue);
 
     return 0;
@@ -238,6 +249,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
         clt->tls_engine->set_io_fd(clt->tls_engine, (uv_os_fd_t) clt->sock);
+        clt->tls_engine->set_authmode(clt->tls_engine, clt->authmode);
     }
 
     int rc;
