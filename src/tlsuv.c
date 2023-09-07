@@ -31,6 +31,17 @@
 #define TLSUV_VERS "<unknown>"
 #endif
 
+#ifdef USE_MBEDTLS
+#define TLSUV_VERIFY_NONE                 0 // MBEDTLS_SSL_VERIFY_NONE
+#define TLSUV_VERIFY_REQUIRED             2 // MBEDTLS_SSL_VERIFY_REQUIRED
+#elif USE_OPENSSL
+#define TLSUV_VERIFY_NONE              0x00 // SSL_VERIFY_NONE
+#define TLSUV_VERIFY_REQUIRED          0x01 // SSL_VERIFY_PEER
+#else
+#error "No TLS engine defined, set USE_MBEDTLS or USE_OPENSSL"
+#endif
+
+
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 static void tcp_connect_cb(uv_connect_t* req, int status);
 static int mbed_ssl_send(void* ctx, const uint8_t *buf, size_t len);
@@ -73,6 +84,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     uv_link_init((uv_link_t *) clt, &mbed_methods);
     clt->tls = tls != NULL ? tls : get_default_tls();
     clt->tls_engine = NULL;
+    clt->authmode = TLSUV_VERIFY_REQUIRED;
     clt->alpn_count = 0;
     clt->alpn_protocols = NULL;
     clt->host = NULL;
@@ -155,6 +167,7 @@ static void on_src_connect(tlsuv_src_t *src, int status, void *ctx) {
         }
         void *data = clt->data;
         clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        clt->tls_engine->set_authmode(clt->tls_engine, clt->authmode);
         if (clt->alpn_protocols && clt->alpn_count > 0) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }

@@ -52,6 +52,8 @@ typedef struct tlsuv_engine_s *tlsuv_engine_t;
 
 struct tlsuv_engine_s {
 
+    void (*set_authmode)(tlsuv_engine_t self, int authmode);
+
     void (*set_protocols)(tlsuv_engine_t self, const char **protocols, int len);
 
     tls_handshake_state (*handshake_state)(tlsuv_engine_t self);
