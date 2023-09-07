@@ -73,6 +73,8 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     uv_link_init((uv_link_t *) clt, &mbed_methods);
     clt->tls = tls != NULL ? tls : get_default_tls();
     clt->tls_engine = NULL;
+    clt->alpn_count = 0;
+    clt->alpn_protocols = NULL;
     clt->host = NULL;
     clt->conn_req = NULL;
     clt->close_cb = NULL;
