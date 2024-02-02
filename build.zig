@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
 
     lib.addCSourceFiles(.{
         .files = &.{
+            "src/common.c",
             "src/tlsuv.c",
             "src/bio.c",
             //        "src/http.c",

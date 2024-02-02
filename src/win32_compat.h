@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "common.h"
 
 #ifndef UV_MBED_WIN32_COMPAT_H
 #define UV_MBED_WIN32_COMPAT_H
@@ -25,7 +26,7 @@
 #if !defined (strndup_DEFINED)
 #define strndup_DEFINED
 static char* strndup(const char* p, size_t len) {
-    char *s = malloc(len + 1);
+    char *s = tlsuv_malloc(len + 1);
     strncpy(s, p, len);
     s[len] = '\0';
     return s;

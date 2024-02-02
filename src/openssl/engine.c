@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "../common.h"
 #include "../um_debug.h"
 #include <tlsuv/tlsuv.h>
 
@@ -174,7 +175,7 @@ static const char *tls_eng_error(tlsuv_engine_t self) {
 }
 
 tls_context *new_openssl_ctx(const char *ca, size_t ca_len) {
-    struct openssl_ctx *c = calloc(1, sizeof(struct openssl_ctx));
+    struct openssl_ctx *c = tlsuv_calloc(1, sizeof(struct openssl_ctx));
     c->api = openssl_context_api;
     init_ssl_context(c, ca, ca_len);
 
@@ -298,7 +299,7 @@ static X509_STORE** process_chains(X509_STORE *store, int *count) {
 
     idx = 0;
     int root_count = sk_X509_num(roots);
-    X509_STORE **stores = calloc(root_count, sizeof (X509_STORE*));
+    X509_STORE **stores = tlsuv_calloc(root_count, sizeof (X509_STORE*));
     while(sk_X509_num(roots) > 0) {
         X509 *r = sk_X509_pop(roots);
         X509_STORE *s = X509_STORE_new();
@@ -574,7 +575,7 @@ void info_cb(const SSL *s, int where, int ret) {
 tlsuv_engine_t new_openssl_engine(void *ctx, const char *host) {
     struct openssl_ctx *context = ctx;
 
-    struct openssl_engine *engine = calloc(1, sizeof(struct openssl_engine));
+    struct openssl_engine *engine = tlsuv_calloc(1, sizeof(struct openssl_engine));
     engine->api = openssl_engine_api;
 
     engine->ssl = SSL_new(context->ctx);
@@ -618,7 +619,7 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
         protolen += strlen(protocols[i]) + 1;
     }
 
-    unsigned char *alpn_protocols = malloc(protolen + 1);
+    unsigned char *alpn_protocols = tlsuv_malloc(protolen + 1);
     unsigned char *p = alpn_protocols;
     for (int i=0; i < len; i++) {
         size_t plen = strlen(protocols[i]);
@@ -628,7 +629,7 @@ static void set_protocols(tlsuv_engine_t self, const char** protocols, int len) 
     }
     *p = 0;
     SSL_set_alpn_protos(e->ssl, alpn_protocols, strlen((char*)alpn_protocols));
-    free(alpn_protocols);
+    tlsuv_free(alpn_protocols);
 }
 
 static int cert_verify_cb(X509_STORE_CTX *certs, void *ctx) {
@@ -678,7 +679,7 @@ static int tls_verify_signature(void *cert, enum hash_algo md, const char* data,
 static void tls_free_ctx(tls_context *ctx) {
     struct openssl_ctx *c = (struct openssl_ctx*)ctx;
     if (c->alpn_protocols) {
-        free(c->alpn_protocols);
+        tlsuv_free(c->alpn_protocols);
     }
     if (c->own_key) {
         c->own_key->free((struct tlsuv_private_key_s *) c->own_key);
@@ -689,10 +690,10 @@ static void tls_free_ctx(tls_context *ctx) {
         for (int i = 0; i < c->ca_chains_count; i++) {
             X509_STORE_free(c->ca_chains[i]);
         }
-        free(c->ca_chains);
+        tlsuv_free(c->ca_chains);
     }
     SSL_CTX_free(c->ctx);
-    free(c);
+    tlsuv_free(c);
 }
 
 static int tls_reset(tlsuv_engine_t self) {
@@ -714,9 +715,9 @@ static void tls_free(tlsuv_engine_t self) {
     SSL_free(e->ssl);
 
     if (e->alpn) {
-        free(e->alpn);
+        tlsuv_free(e->alpn);
     }
-    free(e);
+    tlsuv_free(e);
 }
 
 static void tls_free_cert(tls_cert *cert) {
@@ -886,7 +887,7 @@ static const char* tls_get_alpn(tlsuv_engine_t self) {
     unsigned int protolen;
     SSL_get0_alpn_selected(eng->ssl, &proto, &protolen);
 
-    eng->alpn = calloc(1, protolen + 1);
+    eng->alpn = tlsuv_calloc(1, protolen + 1);
     strncpy(eng->alpn, (const char*)proto, protolen);
     return eng->alpn;
 }
@@ -1024,7 +1025,7 @@ static int write_cert_pem(tls_cert cert, int full_chain, char **pem, size_t *pem
     }
 
     *pemlen = BIO_ctrl_pending(pembio);
-    *pem = calloc(1, *pemlen + 1);
+    *pem = tlsuv_calloc(1, *pemlen + 1);
     BIO_read(pembio, *pem, (int)*pemlen);
 
     BIO_free_all(pembio);
@@ -1070,7 +1071,7 @@ goto on_error;            \
         UM_LOG(WARN, "%s => %s", op, tls_error(ret));
     } else {
         size_t len = BIO_ctrl_pending(b);
-        *pem = calloc(1, len + 1);
+        *pem = tlsuv_calloc(1, len + 1);
         BIO_read(b, *pem, (int)len);
         if (pemlen) {
             *pemlen = len;

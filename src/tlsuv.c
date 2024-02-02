@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "common.h"
 #include "tlsuv/tlsuv.h"
 #include "um_debug.h"
 #include "util.h"
@@ -210,7 +211,7 @@ const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt) {
 }
 
 int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
-    free (clt->host);
+    tlsuv_free (clt->host);
     clt->host = strdup(host);
     return 0;
 }
@@ -304,7 +305,7 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err) {
         if (req->wr->cb) {
             req->wr->cb(req->wr, (int) err);
         }
-        free(req);
+        tlsuv_free(req);
     }
 }
 
@@ -331,7 +332,7 @@ static void process_outbound(tlsuv_stream_t *clt) {
             if (req->wr->cb) {
                 req->wr->cb(req->wr, 0);
             }
-            free(req);
+            tlsuv_free(req);
             continue;
         }
 
@@ -504,7 +505,7 @@ static void on_resolve(uv_getaddrinfo_t *req, int status, struct addrinfo *addr)
         }
     }
     uv_freeaddrinfo(addr);
-    free(req);
+    tlsuv_free(req);
 }
 
 int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *host, int port, uv_connect_cb cb) {
@@ -527,7 +528,7 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
     tlsuv_stream_set_hostname(clt, host);
     clt->conn_req = req;
 
-    clt->resolve_req = calloc(1, sizeof(uv_getaddrinfo_t));
+    clt->resolve_req = tlsuv_calloc(1, sizeof(uv_getaddrinfo_t));
     clt->resolve_req->data = clt;
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
@@ -554,7 +555,7 @@ int tlsuv_stream_read_start(tlsuv_stream_t *clt, uv_alloc_cb alloc_cb, uv_read_c
     } else {
         // schedule idle read (if nothing on the wire)
         // in case reading was stopped with data buffered in TLS engine
-        uv_idle_t *idle = calloc(1, sizeof(*idle));
+        uv_idle_t *idle = tlsuv_calloc(1, sizeof(*idle));
         clt->watcher.data = idle;
         uv_idle_init(clt->loop, idle);
         idle->data = clt;
@@ -616,7 +617,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
     }
 
     // queue request or whatever left
-    tlsuv_write_t *wr = malloc(sizeof(*wr));
+    tlsuv_write_t *wr = tlsuv_malloc(sizeof(*wr));
     wr->wr = req;
     wr->buf = uv_buf_init(buf->base + count, buf->len - count);
     clt->queue_len += 1;
@@ -628,7 +629,7 @@ int tlsuv_stream_write(uv_write_t *req, tlsuv_stream_t *clt, uv_buf_t *buf, uv_w
 
 int tlsuv_stream_free(tlsuv_stream_t *clt) {
     if (clt->host) {
-        free(clt->host);
+        tlsuv_free(clt->host);
         clt->host = NULL;
     }
     if (clt->tls_engine) {

@@ -20,6 +20,7 @@
 #else
 #include <sys/param.h>
 #endif
+#include "common.h"
 #include "bio.h"
 
 struct msg {
@@ -30,7 +31,7 @@ struct msg {
 };
 
 tlsuv_BIO *tlsuv_BIO_new(void) {
-    tlsuv_BIO * bio = calloc(1, sizeof(tlsuv_BIO));
+    tlsuv_BIO * bio = tlsuv_calloc(1, sizeof(tlsuv_BIO));
     bio->available = 0;
     bio->headoffset = 0;
     bio->qlen = 0;
@@ -43,11 +44,11 @@ void tlsuv_BIO_free(tlsuv_BIO *bio) {
     while(!STAILQ_EMPTY(&bio->message_q)) {
         struct msg *m = STAILQ_FIRST(&bio->message_q);
         STAILQ_REMOVE_HEAD(&bio->message_q, next);
-        free(m->buf);
-        free(m);
+        tlsuv_free(m->buf);
+        tlsuv_free(m);
     }
 
-    free(bio);
+    tlsuv_free(bio);
 }
 
 size_t tlsuv_BIO_available(tlsuv_BIO *bio) {
@@ -55,14 +56,14 @@ size_t tlsuv_BIO_available(tlsuv_BIO *bio) {
 }
 
 int tlsuv_BIO_put(tlsuv_BIO *bio, const uint8_t *buf, size_t len) {
-    struct msg *m = malloc(sizeof(struct msg));
+    struct msg *m = tlsuv_malloc(sizeof(struct msg));
     if (m == NULL) {
         return -1;
     }
 
-    m->buf = malloc(len);
+    m->buf = tlsuv_malloc(len);
     if (m->buf == NULL) {
-        free(m);
+        tlsuv_free(m);
         return -1;
     }
     memcpy(m->buf, buf, len);
@@ -94,8 +95,8 @@ int tlsuv_BIO_read(tlsuv_BIO *bio, uint8_t *buf, size_t len) {
             bio->headoffset = 0;
             bio->qlen -= 1;
 
-            free(m->buf);
-            free(m);
+            tlsuv_free(m->buf);
+            tlsuv_free(m);
         }
     }
 
