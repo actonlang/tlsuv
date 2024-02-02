@@ -16,6 +16,7 @@
 #include <uv_link_t.h>
 #include <tlsuv/tls_engine.h>
 #include "tlsuv/tls_link.h"
+#include "common.h"
 #include "um_debug.h"
 #include "util.h"
 #include <string.h>
@@ -199,8 +200,8 @@ static void tls_link_io_write_cb(uv_link_t *l, int status, void *data) {
     if (req->cb) {
         req->cb(l, status, req->ctx);
     }
-    free(req->b);
-    free(req);
+    tlsuv_free(req->b);
+    tlsuv_free(req);
 }
 
 static void tls_link_flush_io(tls_link_t *tls, uv_link_write_cb cb, void *ctx) {
@@ -211,8 +212,8 @@ static void tls_link_flush_io(tls_link_t *tls, uv_link_write_cb cb, void *ctx) {
     WAB_GET_SPACE(*tls->ssl_out, p, len);
     while (len > 0) {
         if (req == NULL) {
-            req = calloc(1, sizeof(struct flush_req));
-            req->b = malloc(TLS_BUF_SZ);
+            req = tlsuv_calloc(1, sizeof(struct flush_req));
+            req->b = tlsuv_malloc(TLS_BUF_SZ);
         }
         memcpy(req->b + total, p, len);
         total += len;
@@ -286,9 +287,9 @@ static ssize_t tls_link_io_read(io_ctx ctx, char *data, size_t max) {
 int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb cb) {
     uv_link_init((uv_link_t *) tls, &tls_methods);
     tls->engine = engine;
-    tls->ssl_in = malloc(sizeof(ssl_buf_t));
+    tls->ssl_in = tlsuv_malloc(sizeof(ssl_buf_t));
     WAB_INIT(*tls->ssl_in);
-    tls->ssl_out = malloc(sizeof(ssl_buf_t));
+    tls->ssl_out = tlsuv_malloc(sizeof(ssl_buf_t));
     WAB_INIT(*tls->ssl_out);
 
     engine->set_io(engine, tls, tls_link_io_read, tls_link_io_write);
@@ -298,9 +299,9 @@ int tlsuv_tls_link_init(tls_link_t *tls, tlsuv_engine_t engine, tls_handshake_cb
 
 void tlsuv_tls_link_free(tls_link_t *tls) {
     if (tls) {
-        free(tls->ssl_out);
+        tlsuv_free(tls->ssl_out);
         tls->ssl_out = NULL;
-        free(tls->ssl_in);
+        tlsuv_free(tls->ssl_in);
         tls->ssl_in = NULL;
     }
 }

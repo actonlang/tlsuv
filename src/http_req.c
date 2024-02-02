@@ -57,14 +57,14 @@ void http_req_free(tlsuv_http_req_t *req) {
     free_hdr_list(&req->req_headers);
     free_hdr_list(&req->resp.headers);
     if (req->resp.status) {
-        free(req->resp.status);
+        tlsuv_free(req->resp.status);
     }
     if (req->inflater) {
         um_free_inflater(req->inflater);
     }
-    free(req->query);
-    free(req->path);
-    free(req->method);
+    tlsuv_free(req->query);
+    tlsuv_free(req->path);
+    tlsuv_free(req->method);
 }
 
 static int printable_len(const unsigned char* buf, size_t len) {
@@ -91,8 +91,8 @@ ssize_t http_req_process(tlsuv_http_req_t *req, const char* buf, ssize_t len) {
 }
 
 static void free_hdr(tlsuv_http_hdr *hdr) {
-    free(hdr->name);
-    free(hdr->value);
+    tlsuv_free(hdr->name);
+    tlsuv_free(hdr->value);
 }
 
 void free_hdr_list(um_header_list *l) {
@@ -102,7 +102,7 @@ void free_hdr_list(um_header_list *l) {
         LIST_REMOVE(h, _next);
 
         free_hdr(h);
-        free(h);
+        tlsuv_free(h);
     }
 }
 
@@ -128,12 +128,12 @@ static ssize_t write_url_encoded(char *buf, size_t maxlen, const char *url) {
 }
 
 static void free_body_cb(tlsuv_http_req_t *r, char *body, ssize_t i) {
-    free(body);
+    tlsuv_free(body);
 }
 
 static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *outlen) {
 #define MAX_FORM (16 * 1024)
-    char *body = malloc(MAX_FORM);
+    char *body = tlsuv_malloc(MAX_FORM);
     if (body == NULL) {
         return NULL;
     }
@@ -161,7 +161,7 @@ static char *encode_query (size_t count, const tlsuv_http_pair *pairs, size_t *o
         *outlen = len;
     return body;
     error:
-    free(body);
+    tlsuv_free(body);
     return NULL;
 }
 
@@ -179,7 +179,7 @@ int tlsuv_http_req_query(tlsuv_http_req_t *req, size_t count, const tlsuv_http_p
         }
     }
 
-    free(req->query);
+    tlsuv_free(req->query);
     req->query = query;
     return 0;
 }
@@ -268,7 +268,7 @@ l += a_size;\
 void add_http_header(um_header_list *hl, const char* name, const char *value, size_t vallen) {
     tlsuv_http_hdr *h;
 
-    h = malloc(sizeof(tlsuv_http_hdr));
+    h = tlsuv_malloc(sizeof(tlsuv_http_hdr));
     h->name = strdup(name);
     LIST_INSERT_HEAD(hl, h, _next);
 
@@ -286,19 +286,19 @@ void set_http_header(um_header_list *hl, const char* name, const char *value) {
     if (value == NULL) {
         if (h != NULL) {
             LIST_REMOVE(h, _next);
-            free(h->value);
-            free(h->name);
-            free(h);
+            tlsuv_free(h->value);
+            tlsuv_free(h->name);
+            tlsuv_free(h);
         }
         return;
     }
 
     if (h == NULL) {
-        h = malloc(sizeof(tlsuv_http_hdr));
+        h = tlsuv_malloc(sizeof(tlsuv_http_hdr));
         h->name = strdup(name);
         LIST_INSERT_HEAD(hl, h, _next);
     } else {
-        free(h->value);
+        tlsuv_free(h->value);
     }
 
     h->value = strdup(value);
@@ -360,7 +360,7 @@ static int http_status_cb(llhttp_t *parser, const char *status, size_t len) {
     tlsuv_http_req_t *r = parser->data;
     r->resp.code = (int) parser->status_code;
     snprintf(r->resp.http_version, sizeof(r->resp.http_version), "%1d.%1d", parser->http_major, parser->http_minor);
-    r->resp.status = calloc(1, len+1);
+    r->resp.status = tlsuv_calloc(1, len+1);
     strncpy(r->resp.status, status, len);
     return 0;
 }
