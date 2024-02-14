@@ -177,9 +177,9 @@ int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int dela
     if (uv_fileno((const uv_handle_t *) &clt->watcher, (uv_os_fd_t *) &s) == 0) {
         int count = 10;
         int intvl = 1;
-        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (const char *)&keepalive, sizeof(keepalive));
 #if defined(TCP_KEEPALIVE)
-        setsockopt(s, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay));
+        setsockopt(s, IPPROTO_TCP, TCP_KEEPALIVE, (const char *)&delay, sizeof(delay));
 #endif
 #if __linux__
         setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
@@ -192,7 +192,7 @@ int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int dela
 int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
     uv_os_fd_t s;
     if (uv_fileno((const uv_handle_t *) &clt->watcher, &s) == 0) {
-        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+        setsockopt((unsigned long long)s, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
     }
     return 0;
 }
@@ -221,7 +221,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     uv_connect_t *req = clt->conn_req;
     int err = 0;
     socklen_t l = sizeof(err);
-    getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, &err, &l);
+    getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, (char *)&err, &l);
 
     if (status == 0 && err != 0) {
 #if _WIN32
@@ -451,7 +451,7 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
     req->cb = cb;
     req->handle = (uv_stream_t *) clt;
 
-    clt->sock = fd;
+    clt->sock = (uv_os_sock_t)fd;
     uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
     return uv_poll_start(&clt->watcher, UV_READABLE | UV_WRITABLE | UV_DISCONNECT, on_clt_io);
 }
@@ -469,7 +469,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
         return -get_error();
     }
 
-    tlsuv_stream_open(req, clt, s, cb);
+    tlsuv_stream_open(req, clt, (uv_os_fd_t)s, cb);
 
     int ret = connect(clt->sock, addr->ai_addr, addr->ai_addrlen);
     if (ret == -1) {

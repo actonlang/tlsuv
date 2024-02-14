@@ -27,7 +27,6 @@ extern "C" {
 #endif
 
 typedef void* (*tlsuv_malloc_func)(size_t size);
-typedef void* (*tlsuv_malloc_func)(size_t size);
 typedef void* (*tlsuv_realloc_func)(void* ptr, size_t size);
 typedef void* (*tlsuv_calloc_func)(size_t count, size_t size);
 typedef void (*tlsuv_free_func)(void* ptr);
