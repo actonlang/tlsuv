@@ -28,7 +28,6 @@ pub fn build(b: *std.Build) void {
             //        "src/http.c",
             "src/tcp_src.c",
             "src/um_debug.c",
-            "src/um_debug.h",
             //        "src/websocket.c",
             //        "src/http_req.c",
             "src/tls_link.c",
@@ -37,7 +36,6 @@ pub fn build(b: *std.Build) void {
             //        "src/compression.c",
             //        "src/compression.h",
             "src/p11.c",
-            "src/p11.h"
         },
         .flags = flags.items
     });
