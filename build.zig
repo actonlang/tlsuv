@@ -72,18 +72,18 @@ pub fn build(b: *std.Build) void {
         .flags = flags.items
     });
 
-    lib.addIncludePath(.{ .path = "deps/llhttp/include" });
-    lib.addIncludePath(.{ .path = "deps/uv_link_t/include" });
-    lib.addIncludePath(.{ .path = "deps/uv_link_t" });
-    lib.addIncludePath(.{ .path = "src" });
-    lib.addIncludePath(.{ .path = "include" });
-    lib.addIncludePath(.{ .path = "../../depsout/include" });
-    lib.installHeader("deps/uv_link_t/include/uv_link_t.h", "uv_link_t.h");
+    lib.addIncludePath(b.path("deps/llhttp/include"));
+    lib.addIncludePath(b.path("deps/uv_link_t/include"));
+    lib.addIncludePath(b.path("deps/uv_link_t"));
+    lib.addIncludePath(b.path("src"));
+    lib.addIncludePath(b.path("include"));
+    lib.addIncludePath(b.path("../../depsout/include"));
+    lib.installHeader(b.path("deps/uv_link_t/include/uv_link_t.h"), "uv_link_t.h");
 //    lib.installHeadersDirectory("include", "include");
     lib.linkLibC();
 
     b.installDirectory(std.Build.Step.InstallDir.Options{
-        .source_dir = .{ .path = "include" },
+        .source_dir = b.path("include"),
         .install_dir = .header,
         .install_subdir = "",
     });
