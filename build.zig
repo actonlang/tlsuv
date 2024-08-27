@@ -5,6 +5,16 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
+    const dep_libmbedtls = b.dependency("libmbedtls", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const dep_libuv = b.dependency("libuv", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const lib = b.addStaticLibrary(.{
         .name = "tlsuv",
         .target = target,
@@ -78,6 +88,11 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(b.path("../../depsout/include"));
     lib.installHeader(b.path("deps/uv_link_t/include/uv_link_t.h"), "uv_link_t.h");
     lib.installHeadersDirectory(b.path("include/tlsuv"), "tlsuv", .{});
+
+    lib.linkLibrary(dep_libmbedtls.artifact("mbedcrypto"));
+    lib.linkLibrary(dep_libmbedtls.artifact("mbedtls"));
+    lib.linkLibrary(dep_libmbedtls.artifact("mbedx509"));
+    lib.linkLibrary(dep_libuv.artifact("uv"));
     lib.linkLibC();
 
     b.installArtifact(lib);
