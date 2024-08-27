@@ -77,13 +77,8 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(b.path("include"));
     lib.addIncludePath(b.path("../../depsout/include"));
     lib.installHeader(b.path("deps/uv_link_t/include/uv_link_t.h"), "uv_link_t.h");
-//    lib.installHeadersDirectory("include", "include");
+    lib.installHeadersDirectory(b.path("include/tlsuv"), "tlsuv", .{});
     lib.linkLibC();
 
-    b.installDirectory(std.Build.Step.InstallDir.Options{
-        .source_dir = b.path("include"),
-        .install_dir = .header,
-        .install_subdir = "",
-    });
     b.installArtifact(lib);
 }
