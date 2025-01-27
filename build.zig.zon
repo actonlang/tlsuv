@@ -1,0 +1,13 @@
+.{
+    .name = "tlsuv",
+    .version = "0.0.0",
+    .dependencies = .{
+        .libmbedtls = .{
+            .path = "../mbedtls/",
+        },
+        .libuv = .{
+            .path = "../libuv/",
+        },
+    },
+    .paths = .{""},
+}
