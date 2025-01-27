@@ -178,15 +178,16 @@ pub fn build(b: *std.Build) void {
     // TLS-specific definitions
     if (use_mbedtls) {
         lib.defineCMacro("USE_MBEDTLS", null);
+        lib.defineCMacro("TLSUV_TLSLIB", "mbedtls");
     } else if (use_openssl) {
         lib.defineCMacro("USE_OPENSSL", null);
     }
 
     lib.linkLibC();
 
-    // Installation
-    b.installArtifact(lib);
-
     // Install headers
     lib.installHeadersDirectory(b.path("include/tlsuv"), "tlsuv", .{});
+
+    // Installation
+    b.installArtifact(lib);
 }

@@ -187,18 +187,34 @@ int tlsuv_stream_close(tlsuv_stream_t *clt, uv_close_cb close_cb) {
 
 int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int delay) {
     uv_os_sock_t s;
-    if (uv_fileno((const uv_handle_t *) &clt->watcher, (uv_os_fd_t *) &s) == 0) {
-        int count = 10;
-        int intvl = 1;
-        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
-#if defined(TCP_KEEPALIVE)
-        setsockopt(s, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay));
+    if (uv_fileno((const uv_handle_t *)&clt->watcher, (uv_os_fd_t *)&s) == 0) {
+        int count = 10;  // Number of keepalive probes
+        int intvl = 1;   // Interval between keepalive probes (in seconds)
+
+        // Enable SO_KEEPALIVE
+        setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (const char *)&keepalive, sizeof(keepalive));
+
+#ifdef _WIN32
+        // Windows-specific TCP keepalive settings
+        struct tcp_keepalive keepalive_opts;
+        keepalive_opts.onoff = keepalive;
+        keepalive_opts.keepalivetime = delay * 1000;  // Convert to milliseconds
+        keepalive_opts.keepaliveinterval = intvl * 1000;  // Convert to milliseconds
+
+        DWORD bytes_returned;
+        WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepalive_opts, sizeof(keepalive_opts),
+                 NULL, 0, &bytes_returned, NULL, NULL);
+#else
+        // Unix-like systems (Linux, macOS, etc.)
+#if defined(TCP_KEEPIDLE)
+        setsockopt(s, IPPROTO_TCP, TCP_KEEPIDLE, (const char *)&delay, sizeof(delay));
 #endif
 #if defined(TCP_KEEPINTVL)
-        setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+        setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, (const char *)&intvl, sizeof(intvl));
 #endif
 #if defined(TCP_KEEPCNT)
-        setsockopt(s, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+        setsockopt(s, IPPROTO_TCP, TCP_KEEPCNT, (const char *)&count, sizeof(count));
+#endif
 #endif
     }
     return 0;
@@ -206,8 +222,13 @@ int tlsuv_stream_keepalive(tlsuv_stream_t *clt, int keepalive, unsigned int dela
 
 int tlsuv_stream_nodelay(tlsuv_stream_t *clt, int nodelay) {
     uv_os_fd_t s;
-    if (uv_fileno((const uv_handle_t *) &clt->watcher, &s) == 0) {
-        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+    if (uv_fileno((const uv_handle_t *)&clt->watcher, &s) == 0) {
+#ifdef _WIN32
+        setsockopt((SOCKET)s, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
+#else
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
+#endif
+
     }
     return 0;
 }
@@ -236,7 +257,7 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     uv_connect_t *req = clt->conn_req;
     int err = 0;
     socklen_t l = sizeof(err);
-    getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, &err, &l);
+    getsockopt(clt->sock, SOL_SOCKET, SO_ERROR, (char *)&err, &l);
 
     if (status == 0 && err != 0) {
 #if _WIN32
@@ -472,7 +493,7 @@ int tlsuv_stream_open(uv_connect_t *req, tlsuv_stream_t *clt, uv_os_fd_t fd, uv_
     req->cb = cb;
     req->handle = (uv_stream_t *) clt;
 
-    clt->sock = fd;
+    clt->sock = (uv_os_sock_t)fd;
     uv_poll_init_socket(clt->loop, &clt->watcher, clt->sock);
     process_connect(clt, 0);
     return 0;
@@ -491,7 +512,7 @@ int tlsuv_stream_connect_addr(uv_connect_t *req, tlsuv_stream_t *clt, const stru
         return -get_error();
     }
 
-    tlsuv_stream_open(req, clt, s, cb);
+    tlsuv_stream_open(req, clt, (uv_os_fd_t)s, cb);
 
     int ret = connect(clt->sock, addr->ai_addr, addr->ai_addrlen);
     if (ret == -1) {
@@ -526,7 +547,7 @@ static void on_connect(uv_os_sock_t sock, int status, void *ctx) {
     }
 
     if (status == 0) {
-        tlsuv_stream_open(clt->conn_req, clt, sock, clt->conn_req->cb);
+        tlsuv_stream_open(clt->conn_req, clt, (uv_os_fd_t)sock, clt->conn_req->cb);
         return;
     }
 
@@ -673,10 +694,10 @@ int tlsuv_socket_set_blocking(uv_os_sock_t s, bool blocking) {
     }
 #elif defined(FIONBIO)
     if (blocking) {
-        int off = 0;
+        unsigned long off = 0;
         ioctl(s, FIONBIO, &off);
     } else {
-        int on = 1;
+        unsigned long on = 1;
         ioctl(s, FIONBIO, &on);
     }
 #endif
@@ -697,7 +718,11 @@ int tlsuv_stream_peername(const tlsuv_stream_t *clt, struct sockaddr *addr, int 
     }
 
     socklen_t socklen = (socklen_t)*namelen;
+#if _WIN32
+    r = getpeername((SOCKET)fd, addr, &socklen);
+#else
     r = getpeername(fd, addr, &socklen);
+#endif
     if (r != 0) {
         return r;
     }

@@ -17,7 +17,9 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 #include <uv.h>
+
 
 #if _WIN32
 #pragma comment (lib, "crypt32.lib")
