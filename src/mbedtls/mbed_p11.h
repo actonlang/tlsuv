@@ -19,7 +19,7 @@
 #pragma pack(push, cryptoki, 1)
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name)  returnType __declspec(dllimport) name
-#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType __declspec(dllimport) (* name)
+#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
 #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
 #else
 #define CK_PTR *

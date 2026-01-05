@@ -34,6 +34,9 @@ pub fn build(b: *std.Build) void {
     var cflags = std.ArrayList([]const u8).init(b.allocator);
     defer cflags.deinit();
     cflags.append("-std=c99") catch unreachable;
+    if (t.os.tag == .windows) {
+        cflags.append("-Wno-error=macro-redefined") catch unreachable;
+    }
 
     const base_sources = [_][]const u8{
         "src/tlsuv.c",
