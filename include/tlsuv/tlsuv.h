@@ -57,6 +57,7 @@ void tlsuv_set_debug(int level, tlsuv_log_func output_f);
 
 int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls);
 void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *connector);
+void tlsuv_stream_set_server(tlsuv_stream_t *clt, int is_server);
 
 int tlsuv_stream_set_protocols(tlsuv_stream_t *clt, int num, const char *protocols[]);
 const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt);
@@ -165,6 +166,7 @@ struct tlsuv_stream_s {
     tls_context *tls;
     tlsuv_engine_t tls_engine;
 
+    int is_server;
     int authmode;
     int alpn_count;
     const char **alpn_protocols;

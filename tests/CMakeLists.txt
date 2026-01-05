@@ -41,6 +41,7 @@ endif()
 set(test_srcs
         engine_tests.cpp
         stream_tests.cpp
+        server_tests.cpp
         key_tests.cpp
         connector_tests.cpp
 )
@@ -69,6 +70,8 @@ endif ()
 target_compile_definitions(all_tests PRIVATE
         TEST_${TLSUV_TLSLIB}
         TEST_SERVER_CA=${CMAKE_CURRENT_SOURCE_DIR}/certs/ca.pem
+        TEST_SERVER_CERT=${CMAKE_CURRENT_SOURCE_DIR}/certs/server.crt
+        TEST_SERVER_KEY=${CMAKE_CURRENT_SOURCE_DIR}/certs/server.key
         )
 if (softhsm_lib)
     target_compile_definitions(all_tests PRIVATE
@@ -109,4 +112,3 @@ if (TLSUV_HTTP)
     mk_test(http)
     mk_test(websocket)
 endif (TLSUV_HTTP)
-

@@ -73,7 +73,9 @@ static int tls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key,
 
 static int set_ca_bundle(tls_context *tls, const char *ca, size_t ca_len);
 
+static tlsuv_engine_t new_openssl_engine_internal(tls_context *ctx, const char *host, int is_server);
 tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host);
+tlsuv_engine_t new_openssl_server_engine(tls_context *ctx, const char *host);
 static void set_io(tlsuv_engine_t , io_ctx , io_read , io_write);
 static void set_io_fd(tlsuv_engine_t , tlsuv_sock_t);
 static void set_protocols(tlsuv_engine_t self, const char** protocols, int len);
@@ -126,6 +128,7 @@ static tls_context openssl_context_api = {
         .version = tls_lib_version,
         .strerror = (const char *(*)(long)) tls_error,
         .new_engine = new_openssl_engine,
+        .new_server_engine = new_openssl_server_engine,
         .free_ctx = tls_free_ctx,
         .set_ca_bundle = set_ca_bundle,
         .set_own_cert = tls_set_own_cert,
@@ -618,7 +621,7 @@ void info_cb(const SSL *s, int where, int ret) {
     }
 }
 
-tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
+static tlsuv_engine_t new_openssl_engine_internal(tls_context *ctx, const char *host, int is_server) {
     struct openssl_ctx *context = (openssl_ctx *) ctx;
 
     struct openssl_engine *engine = tlsuv__calloc(1, sizeof(struct openssl_engine));
@@ -626,13 +629,28 @@ tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
 
     engine->ssl = SSL_new(context->ctx);
 
-    SSL_set_tlsext_host_name(engine->ssl, host);
-    SSL_set1_host(engine->ssl, host);
-    SSL_set_connect_state(engine->ssl);
+    if (!is_server && host) {
+        SSL_set_tlsext_host_name(engine->ssl, host);
+        SSL_set1_host(engine->ssl, host);
+    }
+
+    if (is_server) {
+        SSL_set_accept_state(engine->ssl);
+    } else {
+        SSL_set_connect_state(engine->ssl);
+    }
 
     SSL_set_app_data(engine->ssl, engine);
 
     return &engine->api;
+}
+
+tlsuv_engine_t new_openssl_engine(tls_context *ctx, const char *host) {
+    return new_openssl_engine_internal(ctx, host, 0);
+}
+
+tlsuv_engine_t new_openssl_server_engine(tls_context *ctx, const char *host) {
+    return new_openssl_engine_internal(ctx, host, 1);
 }
 
 static void set_io(tlsuv_engine_t self, io_ctx io, io_read rdf, io_write wrtf) {

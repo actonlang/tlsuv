@@ -109,7 +109,9 @@ static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** proto
 static void mbedtls_set_authmode(tlsuv_engine_t engine, int authmode);
 static int mbedtls_set_own_cert(tls_context *ctx, tlsuv_private_key_t key, tlsuv_certificate_t cert);
 
+static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *host, int is_server);
 tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host);
+tlsuv_engine_t new_mbedtls_server_engine(tls_context *ctx, const char *host);
 
 static void mbedtls_set_io(tlsuv_engine_t, io_ctx , io_read , io_write );
 static void mbedtls_set_fd(tlsuv_engine_t, tlsuv_sock_t);
@@ -171,6 +173,7 @@ static tls_context mbedtls_context_api = {
         .version = mbedtls_version,
         .strerror = mbedtls_error,
         .new_engine = new_mbedtls_engine,
+        .new_server_engine = new_mbedtls_server_engine,
         .free_ctx = mbedtls_free_ctx,
         .set_own_cert = mbedtls_set_own_cert,
         .set_cert_verify = mbedtls_set_cert_verify,
@@ -198,7 +201,7 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
         .free = mbedtls_free,
 };
 
-static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len);
+static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len, int is_server);
 
 static const char* mbedtls_version(void) {
     return MBEDTLS_VERSION_STRING_FULL;
@@ -235,7 +238,7 @@ tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
 
 static void tls_debug_f(void *ctx, int level, const char *file, int line, const char *str);
 
-static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, size_t cabuf_len) {
+static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, size_t cabuf_len, int is_server) {
     char *tls_debug = getenv("MBEDTLS_DEBUG");
     if (tls_debug != NULL) {
         int level = (int) strtol(tls_debug, NULL, 10);
@@ -247,7 +250,7 @@ static void init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, 
     mbedtls_ssl_config_init(ssl_config);
     mbedtls_ssl_conf_dbg(ssl_config, tls_debug_f, stdout);
     mbedtls_ssl_config_defaults(ssl_config,
-                                MBEDTLS_SSL_IS_CLIENT,
+                                is_server ? MBEDTLS_SSL_IS_SERVER : MBEDTLS_SSL_IS_CLIENT,
                                 MBEDTLS_SSL_TRANSPORT_STREAM,
                                 MBEDTLS_SSL_PRESET_DEFAULT);
 #if defined(MBEDTLS_SSL_RENEGOTIATION)
@@ -395,11 +398,11 @@ static int internal_cert_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uin
     return 0;
 }
 
-tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
+static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *host, int is_server) {
     struct mbedtls_context *context = (struct mbedtls_context *) ctx;
 
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
-    init_ssl_context(&mbed_eng->config, context->ca, context->ca_len);
+    init_ssl_context(&mbed_eng->config, context->ca, context->ca_len, is_server);
 
     if (context->own_key && context->own_cert) {
         mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);
@@ -408,23 +411,35 @@ tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
 
     mbedtls_ssl_init(ssl);
     mbedtls_ssl_setup(ssl, &mbed_eng->config);
-    mbedtls_ssl_set_hostname(ssl, host);
+    if (!is_server && host) {
+        mbedtls_ssl_set_hostname(ssl, host);
+    }
 
     mbed_eng->api = mbedtls_engine_api;
     mbed_eng->ssl = ssl;
 
     mbedtls_ssl_set_verify(ssl, internal_cert_verify, mbed_eng);
 
-    if (uv_inet_pton(AF_INET6, host, &mbed_eng->addr) == 0) {
-        mbed_eng->ip_len = 16;
-    } else if (uv_inet_pton(AF_INET, host, &mbed_eng->addr) == 0) {
-        mbed_eng->ip_len = 4;
+    if (!is_server && host) {
+        if (uv_inet_pton(AF_INET6, host, &mbed_eng->addr) == 0) {
+            mbed_eng->ip_len = 16;
+        } else if (uv_inet_pton(AF_INET, host, &mbed_eng->addr) == 0) {
+            mbed_eng->ip_len = 4;
+        }
     }
 
     mbed_eng->cert_verify_f = context->cert_verify_f;
     mbed_eng->verify_ctx = context->verify_ctx;
 
     return &mbed_eng->api;
+}
+
+tlsuv_engine_t new_mbedtls_engine(tls_context *ctx, const char *host) {
+    return new_mbedtls_engine_internal(ctx, host, 0);
+}
+
+tlsuv_engine_t new_mbedtls_server_engine(tls_context *ctx, const char *host) {
+    return new_mbedtls_engine_internal(ctx, host, 1);
 }
 
 static void mbedtls_set_cert_verify(tls_context *ctx,

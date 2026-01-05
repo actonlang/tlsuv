@@ -52,7 +52,7 @@
 #endif
 
 #define MAX_INBOUND_ITERATIONS 16
-#define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s@%p]" fmt, clt->host, clt, ##__VA_ARGS__)
+#define TLS_LOG(lvl, fmt, ...) UM_LOG(lvl, "tls[%s@%p]" fmt, clt->host ? clt->host : "?", clt, ##__VA_ARGS__)
 
 static void on_clt_io(uv_poll_t *, int, int);
 static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
@@ -112,6 +112,7 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
     clt->alloc_cb = NULL;
     clt->queue_len = 0;
     clt->sock = INVALID_SOCKET;
+    clt->is_server = 0;
     clt->authmode = TLSUV_VERIFY_REQUIRED;
     TAILQ_INIT(&clt->queue);
 
@@ -121,6 +122,14 @@ int tlsuv_stream_init(uv_loop_t *l, tlsuv_stream_t *clt, tls_context *tls) {
 void tlsuv_stream_set_connector(tlsuv_stream_t *clt, const tlsuv_connector_t *c) {
     assert(clt != NULL);
     clt->connector = c != NULL ? c : tlsuv_global_connector();
+}
+
+void tlsuv_stream_set_server(tlsuv_stream_t *clt, int is_server) {
+    assert(clt != NULL);
+    clt->is_server = is_server ? 1 : 0;
+    if (clt->is_server) {
+        clt->authmode = TLSUV_VERIFY_NONE;
+    }
 }
 
 static int start_io(tlsuv_stream_t *clt) {
@@ -287,7 +296,25 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
     }
 
     if (clt->tls_engine == NULL) {
-        clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        if (clt->is_server) {
+            if (clt->tls->new_server_engine == NULL) {
+                TLS_LOG(ERR, "server mode not supported by TLS engine");
+                clt->conn_req = NULL;
+                uv_poll_stop(&clt->watcher);
+                req->cb(req, UV_ENOTSUP);
+                return;
+            }
+            clt->tls_engine = clt->tls->new_server_engine(clt->tls, clt->host);
+        } else {
+            clt->tls_engine = clt->tls->new_engine(clt->tls, clt->host);
+        }
+        if (clt->tls_engine == NULL) {
+            TLS_LOG(ERR, "failed to create TLS engine");
+            clt->conn_req = NULL;
+            uv_poll_stop(&clt->watcher);
+            req->cb(req, UV_ECONNABORTED);
+            return;
+        }
         if (clt->alpn_protocols) {
             clt->tls_engine->set_protocols(clt->tls_engine, clt->alpn_protocols, clt->alpn_count);
         }
