@@ -1,12 +1,23 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+// Helper for Zig 0.13/0.14 API differences.
+fn targetIsDarwin(t: std.Target) bool {
+    const is_zig_0_14 = comptime builtin.zig_version.order(std.SemanticVersion.parse("0.14.0") catch unreachable) != .lt;
+    if (is_zig_0_14) {
+        return t.os.tag.isDarwin();
+    } else {
+        return t.isDarwin();
+    }
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
     const t = target.result;
+    const optimize = b.standardOptimizeOption(.{});
 
-    const enable_http = b.option(bool, "http", "enable HTTP/websocket support") orelse false;
-    const enable_keychain = b.option(bool, "keychain", "enable keychain support") orelse true;
+    const enable_http = b.option(bool, "http", "enable HTTP/websocket support") orelse true;
+    const enable_keychain = b.option(bool, "keychain", "enable keychain support on platforms that support it") orelse true;
     const tls_lib = b.option([]const u8, "tlslib", "TLS implementation library (openssl|mbedtls)") orelse "mbedtls";
 
     const use_openssl = std.mem.eql(u8, tls_lib, "openssl");
@@ -57,7 +68,7 @@ pub fn build(b: *std.Build) void {
     });
 
     if (enable_keychain) {
-        if (t.isDarwin()) {
+        if (targetIsDarwin(t)) {
             lib.addCSourceFile(.{
                 .file = b.path("src/apple/keychain.c"),
                 .flags = cflags.items,
@@ -77,6 +88,7 @@ pub fn build(b: *std.Build) void {
     if (enable_http) {
         const http_sources = [_][]const u8{
             "src/http.c",
+            "src/tcp_src.c",
             "src/websocket.c",
             "src/http_req.c",
             "src/tls_link.c",
@@ -102,7 +114,7 @@ pub fn build(b: *std.Build) void {
         lib.addIncludePath(b.path("deps/uv_link_t"));
         lib.linkSystemLibrary("z");
         lib.linkSystemLibrary("llhttp");
-        lib.defineCMacro("TLSUV_HTTP", null);
+        lib.root_module.addCMacro("TLSUV_HTTP", "1");
     }
 
     if (use_openssl) {
@@ -116,8 +128,8 @@ pub fn build(b: *std.Build) void {
         });
         lib.linkSystemLibrary("ssl");
         lib.linkSystemLibrary("crypto");
-        lib.defineCMacro("USE_OPENSSL", null);
-        lib.defineCMacro("TLS_IMPL", "openssl");
+        lib.root_module.addCMacro("USE_OPENSSL", "1");
+        lib.root_module.addCMacro("TLS_IMPL", "openssl");
     } else if (use_mbedtls) {
         const ssl_sources = [_][]const u8{
             "src/mbedtls/engine.c",
@@ -131,13 +143,12 @@ pub fn build(b: *std.Build) void {
             .flags = cflags.items,
         });
         if (dep_libmbedtls) |mbedtls| {
-            lib.addIncludePath(mbedtls.path("include"));
             lib.linkLibrary(mbedtls.artifact("mbedcrypto"));
             lib.linkLibrary(mbedtls.artifact("mbedtls"));
             lib.linkLibrary(mbedtls.artifact("mbedx509"));
         }
-        lib.defineCMacro("USE_MBEDTLS", null);
-        lib.defineCMacro("TLS_IMPL", "mbedtls");
+        lib.root_module.addCMacro("USE_MBEDTLS", "1");
+        lib.root_module.addCMacro("TLS_IMPL", "mbedtls");
     }
 
     lib.addIncludePath(b.path("include"));
@@ -147,20 +158,18 @@ pub fn build(b: *std.Build) void {
     lib.linkLibC();
 
     if (t.os.tag == .windows) {
-        lib.defineCMacro("WIN32_LEAN_AND_MEAN", null);
-        lib.defineCMacro("WINVER", "0x0A00");
-        lib.defineCMacro("_WIN32_WINNT", "0x0A00");
-        lib.defineCMacro("_CRT_SECURE_NO_WARNINGS", null);
-        lib.defineCMacro("_CRT_NONSTDC_NO_DEPRECATE", null);
-        lib.defineCMacro("_WINSOCK_DEPRECATED_NO_WARNINGS", null);
+        lib.root_module.addCMacro("WIN32_LEAN_AND_MEAN", "1");
+        lib.root_module.addCMacro("_CRT_SECURE_NO_WARNINGS", "1");
+        lib.root_module.addCMacro("_CRT_NONSTDC_NO_DEPRECATE", "1");
+        lib.root_module.addCMacro("_WINSOCK_DEPRECATED_NO_WARNINGS", "1");
     }
 
     if (t.os.tag == .linux) {
-        lib.defineCMacro("_POSIX_C_SOURCE", "200112");
-        lib.defineCMacro("_GNU_SOURCE", null);
+        lib.root_module.addCMacro("_POSIX_C_SOURCE", "200112");
+        lib.root_module.addCMacro("_GNU_SOURCE", "1");
     }
 
-    lib.defineCMacro("TLSUV_VERSION", "v0.0.0");
+    lib.root_module.addCMacro("TLSUV_VERSION", "v0.0.0");
 
     lib.installHeadersDirectory(b.path("include/tlsuv"), "tlsuv", .{});
     b.installArtifact(lib);
