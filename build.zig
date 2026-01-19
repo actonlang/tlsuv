@@ -36,17 +36,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }) else null;
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "tlsuv",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
-    var cflags = std.ArrayList([]const u8).init(b.allocator);
-    defer cflags.deinit();
-    cflags.append("-std=c99") catch unreachable;
+    var cflags = std.ArrayList([]const u8).empty;
+    defer cflags.deinit(b.allocator);
+    cflags.append(b.allocator, "-std=c99") catch unreachable;
     if (t.os.tag == .windows) {
-        cflags.append("-Wno-error=macro-redefined") catch unreachable;
+        cflags.append(b.allocator, "-Wno-error=macro-redefined") catch unreachable;
     }
 
     const base_sources = [_][]const u8{
