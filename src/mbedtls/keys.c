@@ -15,6 +15,7 @@
 #include <mbedtls/pk.h>
 #include <string.h>
 #include <tlsuv/tlsuv.h>
+#include <uv.h>
 
 #include "../um_debug.h"
 #include "../alloc.h"
@@ -48,6 +49,35 @@ static struct priv_key_s PRIV_KEY_API = {
         .pubkey = privkey_pubkey,
         .sign = privkey_sign,
 };
+
+static uv_once_t keys_rng_once = UV_ONCE_INIT;
+static uv_mutex_t keys_rng_lock;
+static mbedtls_ctr_drbg_context keys_rng;
+static mbedtls_entropy_context keys_entropy;
+static int keys_rng_rc = MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+
+static void keys_rng_init_once(void) {
+    static const char *pers = "tlsuv.mbedtls.keys";
+
+    if (uv_mutex_init(&keys_rng_lock) != 0) {
+        UM_LOG(ERR, "failed to initialize mbedtls keys RNG lock");
+        keys_rng_rc = MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+        return;
+    }
+
+    mbedtls_ctr_drbg_init(&keys_rng);
+    mbedtls_entropy_init(&keys_entropy);
+    keys_rng_rc = mbedtls_ctr_drbg_seed(&keys_rng, mbedtls_entropy_func, &keys_entropy,
+                                        (const unsigned char *)pers, strlen(pers));
+    if (keys_rng_rc != 0) {
+        UM_LOG(ERR, "failed to seed mbedtls keys RNG: %s", mbedtls_error(keys_rng_rc));
+    }
+}
+
+static int keys_rng_ready(void) {
+    uv_once(&keys_rng_once, keys_rng_init_once);
+    return keys_rng_rc;
+}
 
 void pub_key_init(struct pub_key_s *pubkey) {
     *pubkey = PUB_KEY_API;
@@ -152,19 +182,21 @@ static int privkey_sign(tlsuv_private_key_t pk, enum hash_algo md, const char *d
         return -1;
     }
     int size = mbedtls_md_get_size(md_info);
+    if (keys_rng_ready() != 0) {
+        return -1;
+    }
 
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    mbedtls_entropy_context entropy;
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
-
+    int rc;
+    uv_mutex_lock(&keys_rng_lock);
 #if MBEDTLS_VERSION_MAJOR == 3
-    if (mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, *siglen, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+    rc = mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, *siglen, siglen,
+                         mbedtls_ctr_drbg_random, &keys_rng);
 #else
-    if (mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, siglen, mbedtls_ctr_drbg_random, &ctr_drbg) != 0) {
+    rc = mbedtls_pk_sign(&priv->pkey, type, hash, size, (uint8_t *)sig, siglen,
+                         mbedtls_ctr_drbg_random, &keys_rng);
 #endif
+    uv_mutex_unlock(&keys_rng_lock);
+    if (rc != 0) {
         return -1;
     }
     return 0;
@@ -204,14 +236,7 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
     priv_key_init(privkey);
     mbedtls_pk_init(&privkey->pkey);
 
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    mbedtls_entropy_context entropy;
-    mbedtls_entropy_init(&entropy);
-
-    // todo move this into engine init?
-    int rc = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    int rc = keys_rng_ready();
     if (rc != 0) {
         mbedtls_pk_free(&privkey->pkey);
         tlsuv__free(privkey);
@@ -219,23 +244,25 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         return rc;
     }
     size_t keylen = keydata[keydatalen - 1] == 0 ? keydatalen : keydatalen + 1;
+    uv_mutex_lock(&keys_rng_lock);
     rc = mbedtls_pk_parse_key(&privkey->pkey, (const unsigned char *) keydata, keylen, NULL, 0
 #if MBEDTLS_VERSION_MAJOR == 3
-            ,mbedtls_ctr_drbg_random, &ctr_drbg
+            ,mbedtls_ctr_drbg_random, &keys_rng
 #endif
     );
     if (rc < 0) {
         rc = mbedtls_pk_parse_keyfile(&privkey->pkey, keydata, NULL
 #if MBEDTLS_VERSION_MAJOR == 3
-            ,mbedtls_ctr_drbg_random, &ctr_drbg
+            ,mbedtls_ctr_drbg_random, &keys_rng
 #endif
         );
-        if (rc < 0) {
-            mbedtls_pk_free(&privkey->pkey);
-            tlsuv__free(privkey);
-            *key = NULL;
-            return rc;
-        }
+    }
+    uv_mutex_unlock(&keys_rng_lock);
+    if (rc < 0) {
+        mbedtls_pk_free(&privkey->pkey);
+        tlsuv__free(privkey);
+        *key = NULL;
+        return rc;
     }
     *key = (tlsuv_private_key_t) privkey;
     return rc;
@@ -244,9 +271,6 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
 
 int gen_key(tlsuv_private_key_t *key) {
     int ret;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    const char *pers = "gen_key";
     mbedtls_ecp_group_id ec_curve = MBEDTLS_ECP_DP_SECP256R1;
     mbedtls_pk_type_t pk_type = MBEDTLS_PK_ECKEY;
 
@@ -254,13 +278,8 @@ int gen_key(tlsuv_private_key_t *key) {
     *private_key = PRIV_KEY_API;
     mbedtls_pk_context *pk = &private_key->pkey;
     mbedtls_pk_init(pk);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    mbedtls_entropy_init(&entropy);
-
-    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers,
-                                     strlen(pers))) != 0) {
-        UM_LOG(ERR, "mbedtls_ctr_drbg_seed returned -0x%04x: %s", -ret, mbedtls_error(ret));
+    if ((ret = keys_rng_ready()) != 0) {
+        UM_LOG(ERR, "mbedtls keys RNG unavailable: %s", mbedtls_error(ret));
         goto on_error;
     }
 
@@ -270,7 +289,10 @@ int gen_key(tlsuv_private_key_t *key) {
         goto on_error;
     }
 
-    if ((ret = mbedtls_ecp_gen_key(ec_curve, mbedtls_pk_ec(*pk), mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+    uv_mutex_lock(&keys_rng_lock);
+    ret = mbedtls_ecp_gen_key(ec_curve, mbedtls_pk_ec(*pk), mbedtls_ctr_drbg_random, &keys_rng);
+    uv_mutex_unlock(&keys_rng_lock);
+    if (ret != 0) {
         UM_LOG(ERR, "mbedtls_ecp_gen_key returned -0x%04x: %s", -ret, mbedtls_error(ret));
         goto on_error;
     }
