@@ -59,6 +59,7 @@ static void fail_pending_reqs(tlsuv_stream_t *clt, int err);
 static void check_read(uv_idle_t *idle);
 
 static tls_context *DEFAULT_TLS = NULL;
+static uv_once_t default_tls_once = UV_ONCE_INIT;
 
 static int err_to_uv(int err) {
 #if _WIN32
@@ -83,6 +84,13 @@ static void free_default_tls(void) {
     }
 }
 
+static void init_default_tls_once(void) {
+    DEFAULT_TLS = default_tls_context(NULL, 0);
+    if (DEFAULT_TLS != NULL) {
+        atexit(free_default_tls);
+    }
+}
+
 struct tlsuv_write_s {
     uv_write_t *wr;
     uv_buf_t buf;
@@ -90,10 +98,7 @@ struct tlsuv_write_s {
 };
 
 tls_context *get_default_tls(void) {
-    if (DEFAULT_TLS == NULL) {
-        DEFAULT_TLS = default_tls_context(NULL, 0);
-        atexit(free_default_tls);
-    }
+    uv_once(&default_tls_once, init_default_tls_once);
     return DEFAULT_TLS;
 }
 
