@@ -253,6 +253,31 @@ static int engine_rng_random(void *ctx, unsigned char *output, size_t output_len
     return rc;
 }
 
+static int duplicate_cert_input(const char *cert_buf, size_t cert_len, char **copy, size_t *copy_len) {
+    if (cert_buf == NULL || cert_len == 0) {
+        return MBEDTLS_ERR_X509_INVALID_FORMAT;
+    }
+
+    size_t len = cert_len;
+    if (cert_buf[cert_len - 1] != '\0') {
+        len += 1;
+    }
+
+    char *buf = tlsuv__malloc(len);
+    if (buf == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+
+    memcpy(buf, cert_buf, cert_len);
+    if (len > cert_len) {
+        buf[cert_len] = '\0';
+    }
+
+    *copy = buf;
+    *copy_len = len;
+    return 0;
+}
+
 static int init_ssl_context(mbedtls_ssl_config *ssl_config, const char *ca, size_t cabuf_len, int is_server);
 
 static const char* mbedtls_version(void) {
@@ -278,10 +303,17 @@ int configure_mbedtls() {
 
 tls_context *new_mbedtls_ctx(const char *ca, size_t ca_len) {
     struct mbedtls_context *c = tlsuv__calloc(1, sizeof(struct mbedtls_context));
+    if (c == NULL) {
+        return NULL;
+    }
     c->api = mbedtls_context_api;
     if (ca && ca_len > 0) {
         c->ca_len = ca_len;
         c->ca = tlsuv__calloc(1, ca_len + 1);
+        if (c->ca == NULL) {
+            tlsuv__free(c);
+            return NULL;
+        }
         memcpy(c->ca, ca, ca_len);
     }
 
@@ -320,19 +352,36 @@ static int init_ssl_context(mbedtls_ssl_config *ssl_config, const char *cabuf, s
     mbedtls_ssl_conf_rng(ssl_config, engine_rng_random, NULL);
 
     engine->ca = tlsuv__calloc(1, sizeof(mbedtls_x509_crt));
+    if (engine->ca == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
     mbedtls_x509_crt_init(engine->ca);
 
     if (cabuf != NULL) {
-        int rc = cabuf_len > 0 ? mbedtls_x509_crt_parse(engine->ca, (const unsigned char *)cabuf, cabuf_len) : 0;
+        char *cabuf_copy = NULL;
+        size_t parse_len = 0;
+        if (cabuf_len > 0) {
+            rc = duplicate_cert_input(cabuf, cabuf_len, &cabuf_copy, &parse_len);
+            if (rc != 0) {
+                return rc;
+            }
+        } else {
+            rc = 0;
+        }
+
+        const char *cabuf_path = cabuf_copy != NULL ? cabuf_copy : cabuf;
+        rc = parse_len > 0 ? mbedtls_x509_crt_parse(engine->ca, (const unsigned char *)cabuf_copy, parse_len) : 0;
         if (rc < 0) {
             UM_LOG(VERB, "mbedtls_engine: %s", mbedtls_error(rc));
+            mbedtls_x509_crt_free(engine->ca);
             mbedtls_x509_crt_init(engine->ca);
 
-            rc = mbedtls_x509_crt_parse_file(engine->ca, cabuf);
+            rc = mbedtls_x509_crt_parse_file(engine->ca, cabuf_path);
             if (rc < 0) {
                 UM_LOG(WARN, "failed to load CA from file or memory: %s", mbedtls_error(rc));
             }
         }
+        tlsuv__free(cabuf_copy);
     } else { // try loading default CA stores
 #if _WIN32
         HCERTSTORE       hCertStore;
@@ -456,6 +505,9 @@ static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *
     struct mbedtls_context *context = (struct mbedtls_context *) ctx;
 
     struct mbedtls_engine *mbed_eng = tlsuv__calloc(1, sizeof(struct mbedtls_engine));
+    if (mbed_eng == NULL) {
+        return NULL;
+    }
     int rc = init_ssl_context(&mbed_eng->config, context->ca, context->ca_len, is_server);
     if (rc != 0) {
         mbed_eng->api = mbedtls_engine_api;
@@ -465,14 +517,45 @@ static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *
     }
 
     if (context->own_key && context->own_cert) {
-        mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);
+        rc = mbedtls_ssl_conf_own_cert(&mbed_eng->config, context->own_cert, &context->own_key->pkey);
+        if (rc != 0) {
+            UM_LOG(ERR, "mbedtls_ssl_conf_own_cert failed: %s", mbedtls_error(rc));
+            mbed_eng->api = mbedtls_engine_api;
+            mbed_eng->error = rc;
+            mbedtls_free(&mbed_eng->api);
+            return NULL;
+        }
     }
     mbedtls_ssl_context *ssl = tlsuv__calloc(1, sizeof(mbedtls_ssl_context));
+    if (ssl == NULL) {
+        mbed_eng->api = mbedtls_engine_api;
+        mbed_eng->error = MBEDTLS_ERR_SSL_ALLOC_FAILED;
+        mbedtls_free(&mbed_eng->api);
+        return NULL;
+    }
 
     mbedtls_ssl_init(ssl);
-    mbedtls_ssl_setup(ssl, &mbed_eng->config);
+    rc = mbedtls_ssl_setup(ssl, &mbed_eng->config);
+    if (rc != 0) {
+        UM_LOG(ERR, "mbedtls_ssl_setup failed: %s", mbedtls_error(rc));
+        mbedtls_ssl_free(ssl);
+        tlsuv__free(ssl);
+        mbed_eng->api = mbedtls_engine_api;
+        mbed_eng->error = rc;
+        mbedtls_free(&mbed_eng->api);
+        return NULL;
+    }
     if (!is_server && host) {
-        mbedtls_ssl_set_hostname(ssl, host);
+        rc = mbedtls_ssl_set_hostname(ssl, host);
+        if (rc != 0) {
+            UM_LOG(ERR, "mbedtls_ssl_set_hostname failed: %s", mbedtls_error(rc));
+            mbedtls_ssl_free(ssl);
+            tlsuv__free(ssl);
+            mbed_eng->api = mbedtls_engine_api;
+            mbed_eng->error = rc;
+            mbedtls_free(&mbed_eng->api);
+            return NULL;
+        }
     }
 
     mbed_eng->api = mbedtls_engine_api;
@@ -658,20 +741,40 @@ static void mbedtls_set_alpn_protocols(tlsuv_engine_t engine, const char** proto
 
 static int mbedtls_load_cert(tlsuv_certificate_t *c, const char *cert_buf, size_t cert_len) {
     mbedtls_x509_crt *cert = tlsuv__calloc(1, sizeof(mbedtls_x509_crt));
-    if (cert_buf[cert_len - 1] != '\0') {
-        cert_len += 1;
+    if (cert == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
     }
-    int rc = mbedtls_x509_crt_parse(cert, (const unsigned char *)cert_buf, cert_len);
+    mbedtls_x509_crt_init(cert);
+
+    char *cert_copy = NULL;
+    size_t parse_len = 0;
+    int rc = duplicate_cert_input(cert_buf, cert_len, &cert_copy, &parse_len);
+    if (rc != 0) {
+        mbedtls_x509_crt_free(cert);
+        tlsuv__free(cert);
+        return rc;
+    }
+
+    rc = mbedtls_x509_crt_parse(cert, (const unsigned char *)cert_copy, parse_len);
     if (rc < 0) {
-        rc = mbedtls_x509_crt_parse_file(cert, cert_buf);
+        rc = mbedtls_x509_crt_parse_file(cert, cert_copy);
         if (rc < 0) {
             UM_LOG(WARN, "failed to load certificate");
             mbedtls_x509_crt_free(cert);
             tlsuv__free(cert);
+            tlsuv__free(cert_copy);
             cert = NULL;
+            *c = NULL;
+            return rc;
         }
     }
+    tlsuv__free(cert_copy);
     struct cert_s *crt = tlsuv__calloc(1, sizeof(*crt));
+    if (crt == NULL) {
+        mbedtls_x509_crt_free(cert);
+        tlsuv__free(cert);
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
     *crt = cert_api;
     crt->chain = cert;
     *c = (tlsuv_certificate_t) crt;

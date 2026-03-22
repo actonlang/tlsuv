@@ -15,7 +15,6 @@
 #include <mbedtls/pk.h>
 #include <string.h>
 #include <tlsuv/tlsuv.h>
-#include <uv.h>
 
 #include "../um_debug.h"
 #include "../alloc.h"
@@ -77,6 +76,31 @@ static void keys_rng_init_once(void) {
 static int keys_rng_ready(void) {
     uv_once(&keys_rng_once, keys_rng_init_once);
     return keys_rng_rc;
+}
+
+static int duplicate_key_input(const char *keydata, size_t keydatalen, char **keybuf, size_t *keylen) {
+    if (keydata == NULL || keydatalen == 0) {
+        return MBEDTLS_ERR_PK_KEY_INVALID_FORMAT;
+    }
+
+    size_t len = keydatalen;
+    if (keydata[keydatalen - 1] != '\0') {
+        len += 1;
+    }
+
+    char *buf = tlsuv__malloc(len);
+    if (buf == NULL) {
+        return MBEDTLS_ERR_PK_ALLOC_FAILED;
+    }
+
+    memcpy(buf, keydata, keydatalen);
+    if (len > keydatalen) {
+        buf[keydatalen] = '\0';
+    }
+
+    *keybuf = buf;
+    *keylen = len;
+    return 0;
 }
 
 void pub_key_init(struct pub_key_s *pubkey) {
@@ -232,7 +256,13 @@ static int privkey_to_pem(tlsuv_private_key_t pk, char **pem, size_t *pemlen) {
 }
 
 int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
+    char *keybuf = NULL;
+    size_t keylen = 0;
     struct priv_key_s *privkey = tlsuv__calloc(1, sizeof(struct priv_key_s));
+    if (privkey == NULL) {
+        *key = NULL;
+        return MBEDTLS_ERR_PK_ALLOC_FAILED;
+    }
     priv_key_init(privkey);
     mbedtls_pk_init(&privkey->pkey);
 
@@ -243,21 +273,30 @@ int load_key(tlsuv_private_key_t *key, const char* keydata, size_t keydatalen) {
         *key = NULL;
         return rc;
     }
-    size_t keylen = keydata[keydatalen - 1] == 0 ? keydatalen : keydatalen + 1;
+
+    rc = duplicate_key_input(keydata, keydatalen, &keybuf, &keylen);
+    if (rc != 0) {
+        mbedtls_pk_free(&privkey->pkey);
+        tlsuv__free(privkey);
+        *key = NULL;
+        return rc;
+    }
+
     uv_mutex_lock(&keys_rng_lock);
-    rc = mbedtls_pk_parse_key(&privkey->pkey, (const unsigned char *) keydata, keylen, NULL, 0
+    rc = mbedtls_pk_parse_key(&privkey->pkey, (const unsigned char *) keybuf, keylen, NULL, 0
 #if MBEDTLS_VERSION_MAJOR == 3
             ,mbedtls_ctr_drbg_random, &keys_rng
 #endif
     );
     if (rc < 0) {
-        rc = mbedtls_pk_parse_keyfile(&privkey->pkey, keydata, NULL
+        rc = mbedtls_pk_parse_keyfile(&privkey->pkey, keybuf, NULL
 #if MBEDTLS_VERSION_MAJOR == 3
             ,mbedtls_ctr_drbg_random, &keys_rng
 #endif
         );
     }
     uv_mutex_unlock(&keys_rng_lock);
+    tlsuv__free(keybuf);
     if (rc < 0) {
         mbedtls_pk_free(&privkey->pkey);
         tlsuv__free(privkey);
@@ -275,6 +314,9 @@ int gen_key(tlsuv_private_key_t *key) {
     mbedtls_pk_type_t pk_type = MBEDTLS_PK_ECKEY;
 
     struct priv_key_s *private_key = tlsuv__calloc(1, sizeof(struct priv_key_s));
+    if (private_key == NULL) {
+        return MBEDTLS_ERR_PK_ALLOC_FAILED;
+    }
     *private_key = PRIV_KEY_API;
     mbedtls_pk_context *pk = &private_key->pkey;
     mbedtls_pk_init(pk);
