@@ -58,6 +58,14 @@
 #define container_of(ptr, type, member) \
   ((type *) ((char *) (ptr) - offsetof(type, member)))
 
+#if defined(_MSC_VER)
+#define TLSUV_THREAD_LOCAL __declspec(thread)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define TLSUV_THREAD_LOCAL _Thread_local
+#else
+#define TLSUV_THREAD_LOCAL __thread
+#endif
+
 // inspired by https://golang.org/src/crypto/x509/root_linux.go
 // Possible certificate files; stop after finding one.
 const char *const caFiles[] = {
@@ -208,7 +216,7 @@ static const char* mbedtls_version(void) {
 }
 
 const char *mbedtls_error(long code) {
-    static char errbuf[1024];
+    static TLSUV_THREAD_LOCAL char errbuf[1024];
     mbedtls_strerror((int)code, errbuf, sizeof(errbuf));
     return errbuf;
 
