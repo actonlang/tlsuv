@@ -160,6 +160,13 @@ static int start_io(tlsuv_stream_t *clt) {
     }
 }
 
+static void stop_io(tlsuv_stream_t *clt) {
+    uv_handle_t *watcher = (uv_handle_t *)&clt->watcher;
+    if (uv_handle_get_type(watcher) == UV_POLL && !uv_is_closing(watcher)) {
+        uv_poll_stop(&clt->watcher);
+    }
+}
+
 static void on_internal_close(uv_handle_t *h) {
     tlsuv_stream_t *clt = container_of(h, tlsuv_stream_t, watcher);
     TLS_LOG(VERB, "internal close");
@@ -492,6 +499,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
             TLS_LOG(TRACE, "iteration[%d]: tls read error: %s", iter, clt->tls_engine->strerror(clt->tls_engine));
             clt->read_cb((uv_stream_t *)clt, UV_ECONNABORTED, &buf);
             fail_pending_reqs(clt, UV_ECONNABORTED);
+            stop_io(clt);
             break;
         }
 
@@ -499,6 +507,8 @@ static void process_inbound(tlsuv_stream_t *clt) {
             code = UV_EOF;
             TLS_LOG(TRACE, "iteration[%d]: EOF", iter);
             clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
+            fail_pending_reqs(clt, UV_EOF);
+            stop_io(clt);
             break;
         }
 
@@ -533,11 +543,13 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
 
     if (status != 0) {
         TLS_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
+        fail_pending_reqs(clt, status);
         if (clt->read_cb) {
             uv_buf_t buf;
             clt->alloc_cb((uv_handle_t *) clt, 32 * 1024, &buf);
             clt->read_cb((uv_stream_t *) clt, status, &buf);
         }
+        stop_io(clt);
         return;
     }
 
