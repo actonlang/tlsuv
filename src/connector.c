@@ -58,6 +58,8 @@ struct conn_req_s {
     uv_getaddrinfo_t resolve;
     void *ctx;
     tlsuv_connect_cb cb;
+    char *host;
+    char *port;
 
     uv_poll_t polls[max_connect_socks];
     int count;
@@ -149,6 +151,8 @@ const tlsuv_connector_t* tlsuv_global_connector() {
 }
 
 static void free_conn_req(struct conn_req_s *cr) {
+    tlsuv__free(cr->host);
+    tlsuv__free(cr->port);
     tlsuv__free(cr);
 }
 
@@ -315,15 +319,31 @@ tlsuv_connector_req direct_connect(uv_loop_t *loop, const tlsuv_connector_t *sel
                                    tlsuv_connect_cb cb, void *ctx) {
     assert(cb != NULL);
     struct conn_req_s *cr = tlsuv__calloc(1, sizeof(*cr));
+    if (cr == NULL) {
+        cb(INVALID_SOCKET, UV_ENOMEM, ctx);
+        return NULL;
+    }
     cr->ctx = ctx;
     cr->cb = cb;
+    cr->host = tlsuv__strdup(host);
+    cr->port = tlsuv__strdup(port);
+    if (cr->host == NULL || cr->port == NULL) {
+        free_conn_req(cr);
+        cb(INVALID_SOCKET, UV_ENOMEM, ctx);
+        return NULL;
+    }
 
     struct addrinfo hints = {
             .ai_socktype = SOCK_STREAM,
     };
     CR_LOG(TRACE, "connecting to %s:%s", host, port);
 
-    uv_getaddrinfo(loop, &cr->resolve, on_resolve, host, port, &hints);
+    int rc = uv_getaddrinfo(loop, &cr->resolve, on_resolve, cr->host, cr->port, &hints);
+    if (rc != 0) {
+        free_conn_req(cr);
+        cb(INVALID_SOCKET, rc, ctx);
+        return NULL;
+    }
 
     return cr;
 }
@@ -538,5 +558,4 @@ static void init_proxy_connector(struct tlsuv_proxy_connector_s *c, tlsuv_proxy_
     c->set_auth = proxy_set_auth;
     c->free = proxy_free;
 }
-
 
