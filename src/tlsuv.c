@@ -489,8 +489,22 @@ static void process_inbound(tlsuv_stream_t *clt) {
         } while ( (rc == TLS_MORE_AVAILABLE || rc == TLS_OK) && total < buf.len);
 
         if (total > 0) {
-            TLS_LOG(TRACE, "iteration[%d]: read %zu bytes", iter, total);
+            TLS_LOG(TRACE, "iteration[%d]: read %zu bytes rc=%d", iter, total, rc);
             clt->read_cb((uv_stream_t *) clt, (ssize_t) total, &buf);
+            if (clt->read_cb == NULL) {
+                break;
+            }
+            if (rc == TLS_AGAIN) {
+                break;
+            }
+            if (rc == TLS_ERR || rc == TLS_EOF) {
+                code = UV_EOF;
+                TLS_LOG(TRACE, "iteration[%d]: terminal status %d after payload", iter, rc);
+                clt->read_cb((uv_stream_t *) clt, UV_EOF, &buf);
+                fail_pending_reqs(clt, UV_EOF);
+                stop_io(clt);
+                break;
+            }
             continue;
         }
 
