@@ -299,7 +299,10 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
 #endif
     }
 
-    if (status != 0) {
+    // Once the handshake is under way, a broken connection is left to the
+    // TLS engine, which may first read an alert the peer sent before it
+    // closed the connection
+    if (status != 0 && clt->tls_engine == NULL) {
         TLS_LOG(ERR, "failed connect: %d/%s", status, uv_strerror(status));
         clt->conn_req = NULL;
         uv_poll_stop(&clt->watcher);
@@ -344,6 +347,14 @@ static void process_connect(tlsuv_stream_t *clt, int status) {
         clt->conn_req = NULL;
         uv_poll_stop(&clt->watcher);
         req->cb(req, UV_ECONNABORTED);
+        return;
+    }
+
+    if (status != 0) {
+        TLS_LOG(ERR, "handshake failed: %d/%s", status, uv_strerror(status));
+        clt->conn_req = NULL;
+        uv_poll_stop(&clt->watcher);
+        req->cb(req, status);
         return;
     }
 
@@ -446,7 +457,8 @@ static void process_outbound(tlsuv_stream_t *clt) {
     }
 }
 
-static void process_inbound(tlsuv_stream_t *clt) {
+// Returns the terminal status passed to the read callback, or 0
+static ssize_t process_inbound(tlsuv_stream_t *clt) {
     TLS_LOG(TRACE, "processing inbound data");
 
     // got IO or idle check, can clear the handle
@@ -460,7 +472,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
 
     if (clt->read_cb == NULL) {
         TLS_LOG(TRACE, "no read callback set, skipping read");
-        return;
+        return 0;
     }
 
     int iter = 0;
@@ -534,6 +546,7 @@ static void process_inbound(tlsuv_stream_t *clt) {
     }
     TLS_LOG(TRACE, "finished reading after %d iterations: %zd/%s", iter,
             code, code ? uv_strerror((int)code) : "OK");
+    return code;
 }
 
 static void on_clt_io(uv_poll_t *p, int status, int events) {
@@ -557,6 +570,13 @@ static void on_clt_io(uv_poll_t *p, int status, int events) {
 
     if (status != 0) {
         TLS_LOG(WARN, "IO failed: %d/%s", status, uv_strerror(status));
+        // Data or an alert may have arrived before the connection broke,
+        // like a TLS 1.3 server's rejection of our certificate, which
+        // comes after our side of the handshake is complete
+        if (clt->read_cb && process_inbound(clt) != 0) {
+            stop_io(clt);
+            return;
+        }
         fail_pending_reqs(clt, status);
         if (clt->read_cb) {
             uv_buf_t buf;

@@ -923,9 +923,40 @@ static const char* mbedtls_get_alpn(tlsuv_engine_t engine) {
 }
 
 // The alert stays in the input buffer after mbedtls reports it.
+//
+// An mbedtls TLS 1.3 client rejects a server certificate with an alert in
+// plaintext, which a server that already expects encrypted records fails
+// to decrypt. A two byte record is too short to be encrypted, so the alert
+// is still there as sent.
 static void record_peer_alert(struct mbedtls_engine *eng, int rc) {
     if (rc == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) {
         eng->peer_alert = eng->ssl->MBEDTLS_PRIVATE(in_msg)[1];
+    } else if (rc == MBEDTLS_ERR_SSL_INVALID_MAC) {
+        const unsigned char *rec = eng->ssl->MBEDTLS_PRIVATE(in_hdr);
+        if (rec != NULL && rec[0] == MBEDTLS_SSL_MSG_ALERT && rec[3] == 0 && rec[4] == 2 &&
+            rec[5] == MBEDTLS_SSL_ALERT_LEVEL_FATAL) {
+            eng->peer_alert = rec[6];
+        }
+    }
+}
+
+// A peer that rejects our handshake flight sends an alert and closes the
+// connection, often before we have written all of the flight. The rest of
+// it then fails with a reset, and the alert is left unread in the socket,
+// unencrypted as long as the handshake is not complete.
+static void peek_peer_alert(struct mbedtls_engine *eng, int rc) {
+    if (eng->peer_alert >= 0 || eng->io != &eng->io_fd) {
+        return;
+    }
+    if (rc != MBEDTLS_ERR_NET_CONN_RESET && rc != MBEDTLS_ERR_NET_SEND_FAILED &&
+        rc != MBEDTLS_ERR_NET_RECV_FAILED && rc != MBEDTLS_ERR_SSL_CONN_EOF) {
+        return;
+    }
+    unsigned char rec[7];
+    if (recv(eng->io_fd, (char *) rec, sizeof(rec), MSG_PEEK) == (int) sizeof(rec) &&
+        rec[0] == MBEDTLS_SSL_MSG_ALERT && rec[3] == 0 && rec[4] == 2 &&
+        rec[5] == MBEDTLS_SSL_ALERT_LEVEL_FATAL) {
+        eng->peer_alert = rec[6];
     }
 }
 
@@ -951,6 +982,17 @@ mbedtls_continue_hs(tlsuv_engine_t engine) {
     else {
         eng->error = state;
         record_peer_alert(eng, state);
+        peek_peer_alert(eng, state);
+#if defined(MBEDTLS_SSL_SRV_C) && defined(MBEDTLS_SSL_PROTO_TLS1_2)
+        // A TLS 1.2 server fails a handshake without a required client
+        // certificate silently; tell the client why (RFC 5246, 7.4.6).
+        // TLS 1.3 sends certificate_required on its own.
+        if (state == MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE &&
+            mbedtls_ssl_get_version_number(eng->ssl) == MBEDTLS_SSL_VERSION_TLS1_2) {
+            mbedtls_ssl_send_alert_message(eng->ssl, MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+                                           MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);
+        }
+#endif
         return TLS_HS_ERROR;
     }
 }
