@@ -58,6 +58,20 @@ typedef SOCKET tlsuv_sock_t;
 typedef int tlsuv_sock_t;
 #endif
 
+/**
+ * Peer certificate verification flags, see tlsuv_engine_s::verify_result().
+ */
+#define TLSUV_CERT_EXPIRED        0x0001 // validity period has ended
+#define TLSUV_CERT_REVOKED        0x0002 // certificate is revoked
+#define TLSUV_CERT_NAME_MISMATCH  0x0004 // does not match the expected host name
+#define TLSUV_CERT_NOT_TRUSTED    0x0008 // not issued by a trusted CA
+#define TLSUV_CERT_MISSING        0x0040 // peer did not present a certificate
+#define TLSUV_CERT_SKIP_VERIFY    0x0080 // verification was not performed
+#define TLSUV_CERT_OTHER          0x0100 // any other reason
+#define TLSUV_CERT_FUTURE         0x0200 // validity period has not started
+#define TLSUV_CERT_KEY_USAGE      0x0800 // key usage does not allow this use
+#define TLSUV_CERT_BAD_KEY        0x4000 // unacceptable key or signature algorithm
+
 #if !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
 typedef intptr_t ssize_t;
 # if !defined SSIZE_MAX
@@ -162,6 +176,45 @@ struct tlsuv_engine_s {
      * @param self
      */
     void (*free)(tlsuv_engine_t self);
+
+    /**
+     * Returns a certificate from the chain the peer presented.
+     *
+     * Available once the handshake is complete. Optional, may be NULL.
+     * @param self engine
+     * @param idx position in the chain, 0 is the peer's own certificate
+     * @param der (out) DER encoding, valid until the engine is reset or freed
+     * @param der_len (out) length of DER encoding
+     * @return 0 on success, UV_ENOENT if there is no certificate at [idx]
+     */
+    int (*get_peer_cert)(tlsuv_engine_t self, int idx, const unsigned char **der, size_t *der_len);
+
+    /**
+     * Returns the result of peer certificate verification.
+     *
+     * Also available after a failed handshake. Optional, may be NULL.
+     * @param self engine
+     * @return 0 if the peer certificate was verified, a set of TLSUV_CERT_* flags
+     *         if it was not, or -1 if there is no result (yet)
+     */
+    long (*verify_result)(tlsuv_engine_t self);
+
+    /**
+     * Returns the fatal alert received from the peer.
+     *
+     * Optional, may be NULL.
+     * @param self engine
+     * @return TLS alert description (RFC 8446, section 6.2), or -1 if none was received
+     */
+    int (*peer_alert)(tlsuv_engine_t self);
+
+    /**
+     * Returns the negotiated protocol version, like "TLSv1.3".
+     *
+     * Optional, may be NULL.
+     * @param self engine
+     */
+    const char *(*get_tls_version)(tlsuv_engine_t self);
 };
 
 typedef struct tls_context_s tls_context;

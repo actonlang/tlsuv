@@ -105,6 +105,7 @@ struct mbedtls_engine {
     io_write write_f;
 
     int error;
+    int peer_alert;
 
     int ip_len;
     struct in6_addr addr;
@@ -145,6 +146,14 @@ static const char *mbedtls_version(void);
 static const char *mbedtls_eng_error(tlsuv_engine_t engine);
 
 static void mbedtls_free(tlsuv_engine_t engine);
+
+static int mbedtls_get_peer_cert(tlsuv_engine_t engine, int idx, const unsigned char **der, size_t *der_len);
+
+static long mbedtls_verify_result(tlsuv_engine_t engine);
+
+static int mbedtls_peer_alert(tlsuv_engine_t engine);
+
+static const char *mbedtls_get_tls_version(tlsuv_engine_t engine);
 
 static void mbedtls_free_ctx(tls_context *ctx);
 
@@ -208,6 +217,10 @@ static struct tlsuv_engine_s mbedtls_engine_api = {
         .reset = mbedtls_reset,
         .strerror = mbedtls_eng_error,
         .free = mbedtls_free,
+        .get_peer_cert = mbedtls_get_peer_cert,
+        .verify_result = mbedtls_verify_result,
+        .peer_alert = mbedtls_peer_alert,
+        .get_tls_version = mbedtls_get_tls_version,
 };
 
 static uv_once_t engine_rng_once = UV_ONCE_INIT;
@@ -562,6 +575,7 @@ static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *
 
     mbed_eng->api = mbedtls_engine_api;
     mbed_eng->ssl = ssl;
+    mbed_eng->peer_alert = -1;
 
     mbedtls_ssl_set_verify(ssl, internal_cert_verify, mbed_eng);
 
@@ -686,6 +700,8 @@ static int mbedtls_reset(tlsuv_engine_t engine) {
     e->io = NULL;
     e->read_f = NULL;
     e->write_f = NULL;
+    e->error = 0;
+    e->peer_alert = -1;
     return mbedtls_ssl_session_reset(e->ssl);
 }
 
@@ -906,6 +922,13 @@ static const char* mbedtls_get_alpn(tlsuv_engine_t engine) {
     return mbedtls_ssl_get_alpn_protocol(eng->ssl);
 }
 
+// The alert stays in the input buffer after mbedtls reports it.
+static void record_peer_alert(struct mbedtls_engine *eng, int rc) {
+    if (rc == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) {
+        eng->peer_alert = eng->ssl->MBEDTLS_PRIVATE(in_msg)[1];
+    }
+}
+
 static tls_handshake_state
 mbedtls_continue_hs(tlsuv_engine_t engine) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
@@ -927,6 +950,7 @@ mbedtls_continue_hs(tlsuv_engine_t engine) {
     }
     else {
         eng->error = state;
+        record_peer_alert(eng, state);
         return TLS_HS_ERROR;
     }
 }
@@ -978,6 +1002,7 @@ static int mbedtls_read(tlsuv_engine_t engine, char *out, size_t *out_bytes, siz
             } else {
                 UM_LOG(ERR, "mbedTLS: %0x(%s)", rc, mbedtls_error(rc));
                 eng->error = rc;
+                record_peer_alert(eng, rc);
                 err = TLS_ERR;
             }
             break;
@@ -1004,6 +1029,67 @@ static int mbedtls_close(tlsuv_engine_t engine) {
     struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
     mbedtls_ssl_close_notify(eng->ssl);
     return 0;
+}
+
+static int mbedtls_get_peer_cert(tlsuv_engine_t engine, int idx, const unsigned char **der, size_t *der_len) {
+#if defined(MBEDTLS_SSL_KEEP_PEER_CERTIFICATE)
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    const mbedtls_x509_crt *crt = mbedtls_ssl_get_peer_cert(eng->ssl);
+    for (int i = 0; crt != NULL && i < idx; i++) {
+        crt = crt->next;
+    }
+    if (idx < 0 || crt == NULL || crt->raw.p == NULL) {
+        return UV_ENOENT;
+    }
+    *der = crt->raw.p;
+    *der_len = crt->raw.len;
+    return 0;
+#else
+    return UV_ENOTSUP;
+#endif
+}
+
+static long mbedtls_verify_result(tlsuv_engine_t engine) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    uint32_t flags = mbedtls_ssl_get_verify_result(eng->ssl);
+    if (flags == (uint32_t) -1) {
+        return -1;
+    }
+
+    static const struct { uint32_t mbedtls; long tlsuv; } flag_map[] = {
+        { MBEDTLS_X509_BADCERT_EXPIRED, TLSUV_CERT_EXPIRED },
+        { MBEDTLS_X509_BADCERT_REVOKED, TLSUV_CERT_REVOKED },
+        { MBEDTLS_X509_BADCERT_CN_MISMATCH, TLSUV_CERT_NAME_MISMATCH },
+        { MBEDTLS_X509_BADCERT_NOT_TRUSTED, TLSUV_CERT_NOT_TRUSTED },
+        { MBEDTLS_X509_BADCERT_MISSING, TLSUV_CERT_MISSING },
+        { MBEDTLS_X509_BADCERT_SKIP_VERIFY, TLSUV_CERT_SKIP_VERIFY },
+        { MBEDTLS_X509_BADCERT_FUTURE, TLSUV_CERT_FUTURE },
+        { MBEDTLS_X509_BADCERT_KEY_USAGE | MBEDTLS_X509_BADCERT_EXT_KEY_USAGE |
+          MBEDTLS_X509_BADCERT_NS_CERT_TYPE, TLSUV_CERT_KEY_USAGE },
+        { MBEDTLS_X509_BADCERT_BAD_MD | MBEDTLS_X509_BADCERT_BAD_PK |
+          MBEDTLS_X509_BADCERT_BAD_KEY, TLSUV_CERT_BAD_KEY },
+    };
+    long result = 0;
+    for (size_t i = 0; i < sizeof(flag_map) / sizeof(flag_map[0]); i++) {
+        if (flags & flag_map[i].mbedtls) {
+            result |= flag_map[i].tlsuv;
+            flags &= ~flag_map[i].mbedtls;
+        }
+    }
+    if (flags != 0) {
+        result |= TLSUV_CERT_OTHER;
+    }
+    return result;
+}
+
+static int mbedtls_peer_alert(tlsuv_engine_t engine) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    return eng->peer_alert;
+}
+
+static const char *mbedtls_get_tls_version(tlsuv_engine_t engine) {
+    struct mbedtls_engine *eng = (struct mbedtls_engine *) engine;
+    return mbedtls_ssl_get_version(eng->ssl);
 }
 
 #define OID_PKCS7 MBEDTLS_OID_PKCS "\x07"
