@@ -272,7 +272,7 @@ const char* tlsuv_stream_get_protocol(tlsuv_stream_t *clt) {
 
 int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host) {
     tlsuv__free (clt->host);
-    clt->host = tlsuv__strdup(host);
+    clt->host = host != NULL ? tlsuv__strdup(host) : NULL;
     return 0;
 }
 

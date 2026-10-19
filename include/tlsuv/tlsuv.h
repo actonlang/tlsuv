@@ -83,9 +83,11 @@ int tlsuv_stream_connect(uv_connect_t *req, tlsuv_stream_t *clt, const char *hos
  * \brief set target server hostname, for SNI and hostname validation
  *
  * hostname is set automatically if [tlsuv_stream_connect()] is used to connect.
+ * The TLS engine takes the hostname when the TCP connection is established,
+ * so it can be replaced after [tlsuv_stream_connect()] returns.
  *
  * @param clt TLS stream
- * @param host target hostname
+ * @param host target hostname, or NULL for no SNI and no hostname validation
  * @return 0
  */
 int tlsuv_stream_set_hostname(tlsuv_stream_t *clt, const char *host);

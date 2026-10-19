@@ -545,7 +545,9 @@ static tlsuv_engine_t new_mbedtls_engine_internal(tls_context *ctx, const char *
         mbedtls_free(&mbed_eng->api);
         return NULL;
     }
-    if (!is_server && host) {
+    // NULL means no host name verification, which mbedtls wants to be told
+    // explicitly before it verifies a certificate
+    if (!is_server) {
         rc = mbedtls_ssl_set_hostname(ssl, host);
         if (rc != 0) {
             UM_LOG(ERR, "mbedtls_ssl_set_hostname failed: %s", mbedtls_error(rc));
